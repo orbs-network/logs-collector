@@ -1,13 +1,8 @@
-# Elastic stack (ELK) on Docker
-
-[![Join the chat at https://gitter.im/deviantony/docker-elk](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/deviantony/docker-elk?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
-[![Elastic Stack version](https://img.shields.io/badge/ELK-7.9.1-blue.svg?style=flat)](https://github.com/deviantony/docker-elk/issues/529)
-[![Build Status](https://api.travis-ci.org/deviantony/docker-elk.svg?branch=master)](https://travis-ci.org/deviantony/docker-elk)
+# Orbs Logs Aggregator (Node.js) w/ Elastic stack (ELK) on Docker
 
 Run the latest version of the [Elastic stack][elk-stack] with Docker and Docker Compose.
 
-It gives you the ability to analyze any data set by using the searching/aggregation capabilities of Elasticsearch and
-the visualization power of Kibana.
+It gives you the ability to analyze the logs collected from all live and reporting Blockchain nodes running on the Orbs V2 beta network,  by using the searching/aggregation capabilities of Elasticsearch and the visualization power of Kibana.
 
 *:information_source: The Docker images backing this stack include [Stack Features][stack-features] (formerly X-Pack)
 with [paid features][paid-features] enabled by default (see [How to disable paid features](#how-to-disable-paid-features)
@@ -18,10 +13,6 @@ Based on the official Docker images from Elastic:
 * [Elasticsearch](https://github.com/elastic/elasticsearch/tree/master/distribution/docker)
 * [Logstash](https://github.com/elastic/logstash/tree/master/docker)
 * [Kibana](https://github.com/elastic/kibana/tree/master/src/dev/build/tasks/os_packages/docker_generator)
-
-Other available stack variants:
-
-* [`searchguard`](https://github.com/deviantony/docker-elk/tree/searchguard): Search Guard support
 
 ## Contents
 
@@ -75,16 +66,6 @@ By default, the stack exposes the following ports:
 **:warning: Elasticsearch's [bootstrap checks][booststap-checks] were purposely disabled to facilitate the setup of the
 Elastic stack in development environments. For production setups, we recommend users to set up their host according to
 the instructions from the Elasticsearch documentation: [Important System Configuration][es-sys-config].**
-
-### SELinux
-
-On distributions which have SELinux enabled out-of-the-box you will need to either re-context the files or set SELinux
-into Permissive mode in order for docker-elk to start properly. For example on Redhat and CentOS, the following will
-apply the proper context:
-
-```console
-$ chcon -R system_u:object_r:admin_home_t:s0 docker-elk/
-```
 
 ### Docker for Desktop
 

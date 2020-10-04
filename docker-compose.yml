@@ -1,6 +1,19 @@
-version: '3.2'
+version: "3.2"
 
 services:
+  collector:
+    image: node:12-stretch
+    volumes:
+      - type: bind
+        source: ./workspace/
+        target: "/collector/workspace/"
+      - type: bind
+        source: "./collector"
+        target: "/collector"
+        read_only: true
+    working_dir: /collector/
+    entrypoint: node app.js
+
   elasticsearch:
     build:
       context: elasticsearch/
