@@ -4,15 +4,12 @@ services:
   collector:
     image: node:12-stretch
     volumes:
-      - type: bind
-        source: ./workspace/
-        target: "/collector/workspace/"
-      - type: bind
-        source: "./collector"
-        target: "/collector"
-        read_only: true
+      - ./workspace/:/collector/workspace/
+      - ./collector:/collector
     working_dir: /collector/
     entrypoint: node app.js
+    networks:
+      - elk
 
   elasticsearch:
     build:

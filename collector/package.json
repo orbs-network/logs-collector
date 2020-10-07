@@ -11,6 +11,8 @@
   "dependencies": {
     "chalk": "^4.1.0",
     "lodash": "^4.17.20",
-    "node-fetch": "^2.6.1"
+    "node-fetch": "^2.6.1",
+    "pretty-bytes": "^5.4.1",
+    "uuid": "^8.3.1"
   }
 }

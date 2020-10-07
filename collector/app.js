@@ -6,10 +6,17 @@
 
 */
 
+const pods = [];
+
 const { Pod } = require('./library/pod');
+const { stats } = require('./library/stats');
 
 const somePod = new Pod({
-    targetUrl: 'http://127.0.0.1:3030/logs/nn',
+    targetUrl: 'http://docker.for.mac.host.internal:3030/logs/nn',
     serviceName: 'nn',
 });
 somePod.start();
+
+pods.push(somePod);
+
+stats.setup(pods);
