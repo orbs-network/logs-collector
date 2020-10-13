@@ -9,7 +9,7 @@ const stats = {
         }, 5 * 1000);
     },
     output() {
-        let logstashConnected;
+        let logstashConnected = false;
 
         let totalSentBytes = 0;
         let totalUnackedBytes = 0;
@@ -32,9 +32,9 @@ const stats = {
             logstashMsg = chalk.greenBright('LOGSTASH NOTOK  ');
         }
 
-        let msg = chalk.white(`PODS: ${this.pods.length}   `) + logstashMsg +
-            chalk.whiteBright('SENT: ') + chalk.cyanBright(prettyBytes(totalSentBytes)) + '  ' +
-            chalk.whiteBright('PENDING: ') + chalk.cyan(prettyBytes(totalUnackedBytes));
+        let msg = chalk.white(`Pods: ${this.pods.filter(pod => pod.state === 'active').length}/${this.pods.length}   `) + logstashMsg +
+            chalk.whiteBright('Sent: ') + chalk.cyanBright(prettyBytes(totalSentBytes)) + '  ' +
+            chalk.whiteBright('Pending: ') + chalk.cyan(prettyBytes(totalUnackedBytes));
 
         console.log(msg);
     }

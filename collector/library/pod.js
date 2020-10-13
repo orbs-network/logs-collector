@@ -6,24 +6,12 @@ const util = require('util');
 const { v4: uuidv4 } = require('uuid');
 const fetch = require('node-fetch');
 const chalk = require('chalk');
-const { sortBy } = require('lodash');
+const { sortBy, isObject } = require('lodash');
 
 const { BATCH, UNACKED_DATA } = require('./constants');
 const mkdir = util.promisify(fs.mkdir);
 const writeFile = util.promisify(fs.writeFile);
 const readFile = util.promisify(fs.readFile);
-
-/**
- * 
- * @todo
- * 
- * - It might take Logstash a minute or so to initialize, need to try and buffer data packets which encountered an error getting
- *    to Kibana and re-send them when the connection is open.
- * - Create script that initializes everything and opens up Kibana on the default browser.
- * - Setup the persisted queue
- * - Update the README
- * - Add meaningful logs on the collector operations and remove old debugging logs.
- */
 
 class Pod {
     constructor({
@@ -33,6 +21,7 @@ class Pod {
         checkInterval = 30 * 1000,
         workspacePath = path.join(__dirname, '../workspace/'),
     }) {
+        this.state = 'active';
         this.accumulator = [];
         this.pid = null;
         this.em = new events.EventEmitter();
@@ -50,10 +39,20 @@ class Pod {
         };
     }
 
+    /**
+     * This runs only once per pod instance and makes sure the working directory (the root one for our Pod) has been created so that we can
+     * later on update our state based on this path.
+     */
     createWorkDir() {
         return mkdir(path.join(this.workspacePath, this.serviceName), { recursive: true });
     }
 
+    /**
+     * The start() method is responsible for the liveliness of the Pod
+     * it has a timer function which runs every X amount of seconds and checks for new files
+     * if it finds new files it fires event calls to update the system for these new available batch files for this specific Pod.
+     *
+     */
     async start() {
         await this.createWorkDir();
 
@@ -62,6 +61,14 @@ class Pod {
             console.log('[START] periodical check for new files');
             const result = await fetch(this.targetUrl);
             const response = await result.json();
+
+            if ('status' in response && response.status === 'error') {
+                console.log('clearly no logs here: ', this.targetUrl);
+                console.log('shutting this pod off for now..');
+                this.state = 'disabled';
+                clearInterval(this.pid);
+                return;
+            }
 
             const batches = sortBy(response, ['id']);
 
@@ -93,10 +100,14 @@ class Pod {
         }, this.startDelay);
     }
 
+    /*
+    * For each batch we have a specific file in which we update the amount of bytes submitted to Logstash
+    */
     getTargetPathForBatch({ batch }) {
         return path.join(this.workspacePath, this.serviceName, `batch-${batch.id}`);
     }
 
+    // Get the size of the batch (as in bytes size)
     async getBytesSentFromThisParticularBatch({ batch }) {
         let size;
         try {
@@ -111,36 +122,58 @@ class Pod {
         return this.accumulator[batch.id];
     }
 
+    /**
+     * As we are using an events emitter, this is the backbone of our collector application
+     * this method includes all the handlers for the various events we have in the system / per Pod of course.
+     */
     registerHandlers() {
         this.em.on(BATCH, async (batch) => {
             console.log(`${chalk.greenBright('[NEW BATCH]')} (id: ${batch.id})`);
-            const request = await fetch(`${this.targetUrl}/batch/${batch.id}?follow`);
-            const bytesAlreadySentToLogstashFromThisBatch = await this.getBytesSentFromThisParticularBatch({ batch });
-            let bytesSentAccumlator = 0;
+            try {
+                const request = await fetch(`${this.targetUrl}/batch/${batch.id}?follow`);
+                const bytesAlreadySentToLogstashFromThisBatch = await this.getBytesSentFromThisParticularBatch({ batch });
+                let bytesSentAccumlator = 0;
 
-            request.body.on('data', async (data) => {
-                let sendData = false;
-                if (bytesAlreadySentToLogstashFromThisBatch > 0 && bytesSentAccumlator >= bytesAlreadySentToLogstashFromThisBatch) {
-                    sendData = true;
-                }
+                request.body.on('data', async (data) => {
+                    let sendData = false;
+                    if (bytesAlreadySentToLogstashFromThisBatch > 0 && bytesSentAccumlator >= bytesAlreadySentToLogstashFromThisBatch) {
+                        sendData = true;
+                    }
 
-                if (bytesAlreadySentToLogstashFromThisBatch === 0) {
-                    sendData = true;
-                }
+                    if (bytesAlreadySentToLogstashFromThisBatch === 0) {
+                        sendData = true;
+                    }
 
-                if (sendData) {
-                    await this.submitDataToLogstash({ data, batch });
-                }
+                    if (sendData) {
+                        await this.submitDataToLogstash({ data, batch });
+                    }
 
-                bytesSentAccumlator += data.length;
-            });
+                    bytesSentAccumlator += data.length;
+                });
+
+            } catch (err) {
+                // The request got an error for some reason,
+                // The next round for new files scouting will pick up where we left off ;-)
+            }
         });
 
-        this.em.on(UNACKED_DATA, async ({ data, packetId }) => {
-            await this.submitDataToLogstash({ data, packetId });
+        this.em.on(UNACKED_DATA, async ({ data, batch, packetId }) => {
+            await this.submitDataToLogstash({ data, batch, packetId });
         });
     }
 
+    /**
+     * Submit the data to logstash once it is ready to accept data
+     * This method is equipped with a mechanism to re-try logstash incase it is not ready to accept connections / is overwhelmed with
+     * incoming connections from other Pods. 
+     * 
+     * Once the function received a correct response from Logstash, the data transmitted will be documented and inserted into the stats.
+     *  
+     * The method expects to receive the data buffer, a batch object including the batch Id and some other basic information regarding the current batch
+     * this piece of data belongs to, and optionally a packetId identifier which is only there incase we have re-tried this data packet before and didn't succeed
+     * in sending it to Lodash at the first attempt.
+     * 
+     */
     async submitDataToLogstash({ data, batch, packetId = '' }) {
         const body = JSON.stringify({ message: data.toString() });
 
@@ -152,7 +185,6 @@ class Pod {
             });
 
             if (this.logstashConnectivityReported) {
-                console.log(chalk.greenBright('Reconnected to logstash'));
                 this.logstashConnectivityReported = false;
             }
 
@@ -183,7 +215,6 @@ class Pod {
             }, 5 * 1000);
 
             if (!this.logstashConnectivityReported) {
-                console.log(chalk.yellow('connection to logstash refused, keeping quite for now'), e);
                 this.logstashConnectivityReported = true;
             }
         }
@@ -191,6 +222,11 @@ class Pod {
         return Promise.resolve();
     }
 
+    /**
+     * This method is used to report statistics and to update the disc-written state of
+     * the batch (in cases where the connection might closed or in a crash) this way we can avoid
+     * sending the same block of data from a specific batch twice.
+     */
     async documentSentData({ data, batch }) {
         this.accumulator[batch.id] += data.length;
         this.stats.totalSentBytes += data.length;

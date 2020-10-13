@@ -2,17 +2,26 @@
 
 Run the latest version of the [Elastic stack][elk-stack] with Docker and Docker Compose.
 
-It gives you the ability to analyze the logs collected from all live and reporting Blockchain nodes running on the Orbs V2 beta network,  by using the searching/aggregation capabilities of Elasticsearch and the visualization power of Kibana.
+It gives you the ability to analyze the logs collected from all live and reporting Blockchain nodes running on the Orbs V2 beta network, by using the searching/aggregation capabilities of Elasticsearch and the visualization power of Kibana.
 
-*:information_source: The Docker images backing this stack include [Stack Features][stack-features] (formerly X-Pack)
-with [paid features][paid-features] enabled by default (see [How to disable paid features](#how-to-disable-paid-features)
-to disable them). **The [trial license][trial-license] is valid for 30 days**.*
+## TL;DR
+
+If you run `start.sh` in the root of this repo, once done, the script would have spawned a full-fledged Docker-Compose stack of ELK plus our
+Node.js based collector which reads logs from all our Blockchain nodes and ships them to that ELK stack for your convinient viewing.
+Once ready, the script will open up a browser tab for you and welcome you into Kibana to view the logs.
+
+The default login/password is: 
+ * Username: `elastic` 
+ * Password: `changeme`
+
+Enjoy!
 
 Based on the official Docker images from Elastic:
 
 * [Elasticsearch](https://github.com/elastic/elasticsearch/tree/master/distribution/docker)
 * [Logstash](https://github.com/elastic/logstash/tree/master/docker)
 * [Kibana](https://github.com/elastic/kibana/tree/master/src/dev/build/tasks/os_packages/docker_generator)
+* [Node.js](https://github.com/nodejs/docker-node/blob/a8494b1676216bfe274073993016da0c2e0bfcdd/12/stretch/Dockerfile)
 
 ## Contents
 
