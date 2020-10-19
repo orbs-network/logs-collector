@@ -13,6 +13,24 @@ const mkdir = util.promisify(fs.mkdir);
 const writeFile = util.promisify(fs.writeFile);
 const readFile = util.promisify(fs.readFile);
 
+/**
+ * @todo:
+ * 
+ * 1. Make sure we only have 1 timer that runs the periodical files checker
+ *    This new timer, will be responsible to iterate through the local file checker methods and run them one by one
+ *    to avoid CPU spikes.
+ * 
+ * 2. (timer work): In case after one run, the Pod is determined as 'disabled', filter it from future runs
+ * 3. Thesis testing: Make sure that access to Logstash is handled by simply re-trying at a later point in time
+ *    without creating timers for each and every packet of data. 
+ * 
+ *    As in, if the first packet sending to Logstash fails, abort the entire process and wait for the next
+ *    file checker iteration in order to send the data out.
+ * 
+ *    Leave the mechanism for re-trying packets aside for now (let's see if this improves memory performance somehow)
+ * 
+ */
+
 class Pod {
     constructor({
         targetUrl,
@@ -47,6 +65,55 @@ class Pod {
         return mkdir(path.join(this.workspacePath, this.serviceName), { recursive: true });
     }
 
+    async checkForNewFiles() {
+        console.log(`[START][${this.state}] periodical check for new files`);
+        if (this.state === 'disabled') {
+            return;
+        }
+
+        let result, response;
+
+        try {
+            result = await fetch(this.targetUrl);
+            response = await result.json();
+        } catch (err) {
+            if (err.message.indexOf('ECONNREFUSED') !== -1) {
+                console.log('clearly no logs here: ', this.targetUrl);
+                console.log('shutting this pod off for now..');
+                this.state = 'disabled';
+                return;
+            }
+        }
+
+        if ('status' in response && response.status === 'error') {
+            console.log('clearly no logs here: ', this.targetUrl);
+            console.log('shutting this pod off for now..');
+            this.state = 'disabled';
+            return;
+        }
+
+        const batches = sortBy(response, ['id']);
+
+        for (let i = 0; i < batches.length; i++) {
+            let batch = batches[i];
+            let findResult = this.seenBatches.findIndex(b => b.id === batch.id);
+            if (findResult === -1) {
+                this.seenBatches.push(batch);
+                this.em.emit(BATCH, batch);
+            } else {
+                // Make sure that the batches that you've already seen have not changed in their length
+                // incase we have history for them on our file system
+
+                let bytesGotFromBatch = await this.getBytesSentFromThisParticularBatch({ batch });
+                // Incase we get disconnected for some reason (network failure or what not)
+                // Let's make sure that while we do still see this batch we make sure we have heard everything it has to say.
+                if (batch.batchSize > bytesGotFromBatch && this.unackedPackets.length === 0) {
+                    this.em.emit(BATCH, batch);
+                }
+            }
+        }
+    }
+
     /**
      * The start() method is responsible for the liveliness of the Pod
      * it has a timer function which runs every X amount of seconds and checks for new files
@@ -56,48 +123,15 @@ class Pod {
     async start() {
         await this.createWorkDir();
 
-        // Create all handlers
-        const checkForNewFiles = async () => {
-            console.log('[START] periodical check for new files');
-            const result = await fetch(this.targetUrl);
-            const response = await result.json();
-
-            if ('status' in response && response.status === 'error') {
-                console.log('clearly no logs here: ', this.targetUrl);
-                console.log('shutting this pod off for now..');
-                this.state = 'disabled';
-                clearInterval(this.pid);
-                return;
-            }
-
-            const batches = sortBy(response, ['id']);
-
-            for (let i = 0; i < batches.length; i++) {
-                let batch = batches[i];
-                let findResult = this.seenBatches.findIndex(b => b.id === batch.id);
-                if (findResult === -1) {
-                    this.seenBatches.push(batch);
-                    this.em.emit(BATCH, batch);
-                } else {
-                    // Make sure that the batches that you've already seen have not changed in their length
-                    // incase we have history for them on our file system
-
-                    let bytesGotFromBatch = await this.getBytesSentFromThisParticularBatch({ batch });
-                    // Incase we get disconnected for some reason (network failure or what not)
-                    // Let's make sure that while we do still see this batch we make sure we have heard everything it has to say.
-                    if (batch.batchSize > bytesGotFromBatch && this.unackedPackets.length === 0) {
-                        this.em.emit(BATCH, batch);
-                    }
-                }
-            }
-        };
-
         this.registerHandlers();
 
         setTimeout(() => {
-            checkForNewFiles();
-            this.pid = setInterval(checkForNewFiles, this.checkInterval);
+            this.checkForNewFiles();
         }, this.startDelay);
+
+        this.pid = setInterval(() => {
+            this.checkForNewFiles();
+        }, this.checkInterval);
     }
 
     /*

@@ -2,6 +2,10 @@
 
 echo "Starting up everything..."
 
+if test ! -f ".env"; then
+    echo "ELK_VERSION=7" > .env
+fi
+
 cd collector && npm install;  node generate-config.js ; cd ..
 
 echo "Starting up the ELK stack.."
