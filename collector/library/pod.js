@@ -6,7 +6,7 @@ const util = require('util');
 const { v4: uuidv4 } = require('uuid');
 const fetch = require('node-fetch');
 const chalk = require('chalk');
-const { sortBy, isObject } = require('lodash');
+const { sortBy } = require('lodash');
 
 const { BATCH, UNACKED_DATA } = require('./constants');
 const mkdir = util.promisify(fs.mkdir);
@@ -16,18 +16,21 @@ const readFile = util.promisify(fs.readFile);
 /**
  * @todo:
  * 
- * 1. Make sure we only have 1 timer that runs the periodical files checker
- *    This new timer, will be responsible to iterate through the local file checker methods and run them one by one
- *    to avoid CPU spikes.
  * 
- * 2. (timer work): In case after one run, the Pod is determined as 'disabled', filter it from future runs
  * 3. Thesis testing: Make sure that access to Logstash is handled by simply re-trying at a later point in time
- *    without creating timers for each and every packet of data. 
+ *    without creating timers for each and every packet of data.
  * 
  *    As in, if the first packet sending to Logstash fails, abort the entire process and wait for the next
  *    file checker iteration in order to send the data out.
  * 
  *    Leave the mechanism for re-trying packets aside for now (let's see if this improves memory performance somehow)
+ * 
+ * 5. Persistent mechanism & Startup review together with Ron
+ * 6. Reconfigure live while the process is running
+ * 7. Change the implementation of submitDataToLogstash to use the new endpoints from logs-service (block based response)
+ *    (start-offset)
+ * 
+ * 
  * 
  */
 
@@ -46,7 +49,7 @@ class Pod {
 
         this.serviceName = serviceName;
         this.targetUrl = targetUrl;
-        this.checkInterval = checkInterval;
+        this.checkIntervalInMilli = checkInterval;
         this.startDelay = startDelay;
         this.workspacePath = workspacePath;
         this.seenBatches = [];
@@ -66,10 +69,7 @@ class Pod {
     }
 
     async checkForNewFiles() {
-        console.log(`[START][${this.state}] periodical check for new files`);
-        if (this.state === 'disabled') {
-            return;
-        }
+        console.log(`[START] periodical check for new files`, this.targetUrl);
 
         let result, response;
 
@@ -77,41 +77,42 @@ class Pod {
             result = await fetch(this.targetUrl);
             response = await result.json();
         } catch (err) {
-            if (err.message.indexOf('ECONNREFUSED') !== -1) {
-                console.log('clearly no logs here: ', this.targetUrl);
-                console.log('shutting this pod off for now..');
-                this.state = 'disabled';
-                return;
-            }
+            //console.log('failed getting available batches', err);
+            return;
         }
 
         if ('status' in response && response.status === 'error') {
-            console.log('clearly no logs here: ', this.targetUrl);
-            console.log('shutting this pod off for now..');
-            this.state = 'disabled';
+            //console.log('found error when fetching availble batches', response);
             return;
         }
 
         const batches = sortBy(response, ['id']);
 
         for (let i = 0; i < batches.length; i++) {
-            let batch = batches[i];
-            let findResult = this.seenBatches.findIndex(b => b.id === batch.id);
-            if (findResult === -1) {
-                this.seenBatches.push(batch);
-                this.em.emit(BATCH, batch);
-            } else {
-                // Make sure that the batches that you've already seen have not changed in their length
-                // incase we have history for them on our file system
+            const batch = batches[i];
+            const bytesSentFromBatch = await this.getBytesSentFromThisParticularBatch({ batch });
 
-                let bytesGotFromBatch = await this.getBytesSentFromThisParticularBatch({ batch });
-                // Incase we get disconnected for some reason (network failure or what not)
-                // Let's make sure that while we do still see this batch we make sure we have heard everything it has to say.
-                if (batch.batchSize > bytesGotFromBatch && this.unackedPackets.length === 0) {
-                    this.em.emit(BATCH, batch);
-                }
+            if (bytesSentFromBatch > batch.batchSize) {
+                console.log('We collected more bytes than availble!', this.targetUrl, 'batch id:', batch.id, 'bytes handled:', bytesSentFromBatch, 'batch size:', batch.batchSize);
+                continue;
+            }
+
+            if (batch.batchSize > bytesSentFromBatch) {
+                console.log('downloading batch', batch);
+                // handle batch
+                await this.handleBatch(batch);
+
+                if (await this.getBytesSentFromThisParticularBatch({ batch }) < batch.batchSize) {
+                    console.log('could not download the entire batch', batch);
+                    return;
+                } // Avoid moving to next batch in case we could not download the entire batch
             }
         }
+    }
+
+    stop() {
+        console.log(`Shutting down pod for endpoint ${this.targetUrl}`);
+        clearInterval(this.pid);
     }
 
     /**
@@ -121,17 +122,19 @@ class Pod {
      *
      */
     async start() {
+        await new Promise((r) => setTimeout(r, (Math.floor(Math.random() * 30 * 1000))));
         await this.createWorkDir();
 
-        this.registerHandlers();
+        let counter = 1;
 
-        setTimeout(() => {
-            this.checkForNewFiles();
-        }, this.startDelay);
+        const setupTimer = () => {
+            this.checkForNewFiles()
+                .finally(() => {
+                    this.pid = setTimeout(setupTimer, this.checkIntervalInMilli);
+                });
+        };
 
-        this.pid = setInterval(() => {
-            this.checkForNewFiles();
-        }, this.checkInterval);
+        setupTimer();
     }
 
     /*
@@ -156,40 +159,52 @@ class Pod {
         return this.accumulator[batch.id];
     }
 
+    async handleBatch(batch) {
+        console.log(`${chalk.greenBright('[NEW BATCH]')} (id: ${batch.id})`);
+
+        const request = await fetch(`${this.targetUrl}/batch/${batch.id}?follow`);
+
+        const bytesAlreadySentToLogstashFromThisBatch = await this.getBytesSentFromThisParticularBatch({ batch });
+        let bytesSentAccumlator = 0;
+
+        if (!request.ok) {
+            throw new Error('The request did not finish successfully!');
+        }
+
+        await new Promise((res, rej) => {
+            request.body.on('data', async (data) => {
+                let sendData = false;
+                if (bytesAlreadySentToLogstashFromThisBatch > 0 && bytesSentAccumlator >= bytesAlreadySentToLogstashFromThisBatch) {
+                    sendData = true;
+                }
+
+                if (bytesAlreadySentToLogstashFromThisBatch === 0) {
+                    sendData = true;
+                }
+
+                if (sendData) {
+                    await this.submitDataToLogstash({ data, batch }).catch((err) => {
+                        rej(err);
+                        request.body.destroy();
+                    });
+                }
+
+                bytesSentAccumlator += data.length;
+            });
+
+            request.body.on('error', (err) => {
+                console.log(err);
+            });
+            request.body.on('end', res); // @todo: print a log line here to understand if we closed the connection on error
+        });
+    }
+
     /**
      * As we are using an events emitter, this is the backbone of our collector application
      * this method includes all the handlers for the various events we have in the system / per Pod of course.
      */
     registerHandlers() {
-        this.em.on(BATCH, async (batch) => {
-            console.log(`${chalk.greenBright('[NEW BATCH]')} (id: ${batch.id})`);
-            try {
-                const request = await fetch(`${this.targetUrl}/batch/${batch.id}?follow`);
-                const bytesAlreadySentToLogstashFromThisBatch = await this.getBytesSentFromThisParticularBatch({ batch });
-                let bytesSentAccumlator = 0;
-
-                request.body.on('data', async (data) => {
-                    let sendData = false;
-                    if (bytesAlreadySentToLogstashFromThisBatch > 0 && bytesSentAccumlator >= bytesAlreadySentToLogstashFromThisBatch) {
-                        sendData = true;
-                    }
-
-                    if (bytesAlreadySentToLogstashFromThisBatch === 0) {
-                        sendData = true;
-                    }
-
-                    if (sendData) {
-                        await this.submitDataToLogstash({ data, batch });
-                    }
-
-                    bytesSentAccumlator += data.length;
-                });
-
-            } catch (err) {
-                // The request got an error for some reason,
-                // The next round for new files scouting will pick up where we left off ;-)
-            }
-        });
+        //this.em.on(BATCH, 
 
         this.em.on(UNACKED_DATA, async ({ data, batch, packetId }) => {
             await this.submitDataToLogstash({ data, batch, packetId });
@@ -208,52 +223,16 @@ class Pod {
      * in sending it to Lodash at the first attempt.
      * 
      */
-    async submitDataToLogstash({ data, batch, packetId = '' }) {
+    async submitDataToLogstash({ data, batch, }) {
         const body = JSON.stringify({ message: data.toString() });
 
-        try {
-            await fetch('http://logstash:5000/', {
-                method: 'post',
-                body,
-                headers: { 'Content-Type': 'application/json' },
-            });
+        await fetch('http://logstash:5000/', {
+            method: 'post',
+            body,
+            headers: { 'Content-Type': 'application/json' },
+        });
 
-            if (this.logstashConnectivityReported) {
-                this.logstashConnectivityReported = false;
-            }
-
-            if (packetId.length > 0) {
-                // This packet has been sent successfully now, let's remove it from the unacked packets array
-                let packetIndex = this.unackedPackets.findIndex(o => o.packetId === packetId);
-                if (packetIndex !== -1) {
-                    this.stats.totalUnackedBytes -= this.unackedPackets[packetIndex].size;
-                    this.unackedPackets.splice(packetIndex, 1);
-                }
-            }
-
-            await this.documentSentData({ data, batch });
-        } catch (e) {
-            let targetPacketId;
-
-            if (packetId.length > 0) {
-                targetPacketId = packetId;
-            } else {
-                // In case we couldn't send the data to Logstash let's re-try this packet again in 5 seconds
-                targetPacketId = uuidv4(); // Give this packet a name
-                this.unackedPackets.push({ packetId: targetPacketId, size: data.length });
-                this.stats.totalUnackedBytes += data.length;
-            }
-
-            setTimeout(() => {
-                this.em.emit(UNACKED_DATA, { data, batch, packetId: targetPacketId });
-            }, 5 * 1000);
-
-            if (!this.logstashConnectivityReported) {
-                this.logstashConnectivityReported = true;
-            }
-        }
-
-        return Promise.resolve();
+        await this.documentSentData({ data, batch });
     }
 
     /**

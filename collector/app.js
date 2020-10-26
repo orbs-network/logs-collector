@@ -1,16 +1,17 @@
-const fs = require('fs');
-const path = require('path');
-const configPath = path.join(__dirname, 'config.json');
-
-const pods = [];
-
 const { Pod } = require('./library/pod');
 const { stats } = require('./library/stats');
+const { getConfiguration, mergeConfigs } = require('./library/config');
 
-if (fs.existsSync(configPath)) {
-    try {
-        const configAsString = fs.readFileSync(configPath, 'utf-8');
-        const config = JSON.parse(configAsString);
+const reconfigIntervalInMilli = 86400 * 1000;
+const pods = [];
+let config;
+
+async function continuousSetup() {
+    console.log('Configuring pods...');
+    if (!config) {
+        console.log('initial run');
+        // Initial run
+        config = await getConfiguration();
 
         for (let n in config) {
             let podConfig = config[n];
@@ -18,22 +19,36 @@ if (fs.existsSync(configPath)) {
             pod.start();
             pods.push(pod);
         }
-    } catch (e) {
-        console.log('Failed to startup collector', e);
-        process.exit(2);
+
+        stats.setup(pods);
+    } else {
+        console.log('subsequent run');
+        // Subsequent runs
+        let newConfig = await getConfiguration();
+        config = mergeConfigs({
+            oldConfig: config,
+            newConfig,
+            removeCallback: (podConfig) => {
+                const idx = pods.findIndex(o => o.targetUrl === podConfig.targetUrl);
+                pods[idx].stop();
+                pods.splice(idx, 1);
+            },
+            addCallback: () => {
+                const pod = new Pod(podConfig);
+                pod.start();
+                pods.push(pod);
+            }
+        });
     }
-} else {
-    console.log('No configuration available for the collector!');
-    console.log('Please generate the config using $ node generate-config.js');
-    process.exit(1);
 }
 
-// const somePod = new Pod({
-//     targetUrl: 'http://docker.for.mac.host.internal:3030/logs/nn',
-//     serviceName: 'nn',
+continuousSetup();
+setInterval(() => { continuousSetup(); }, reconfigIntervalInMilli);
+
+// process.on('unhandledRejection', () => {
+//     // For now we just want unhandled rejections to not output to console.
 // });
-// somePod.start();
 
-// pods.push(somePod);
-
-stats.setup(pods);
+process.on('uncaughtException', () => {
+    // For now we just want uncaught exceptions to not output to console.
+});
