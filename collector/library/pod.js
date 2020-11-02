@@ -13,6 +13,8 @@ const mkdir = util.promisify(fs.mkdir);
 const writeFile = util.promisify(fs.writeFile);
 const readFile = util.promisify(fs.readFile);
 
+let globalBatchHandlerId = 0;
+
 /**
  * @todo:
  * 
@@ -39,7 +41,7 @@ class Pod {
         targetUrl,
         serviceName,
         startDelay = 24,
-        checkInterval = 30 * 1000,
+        checkInterval = 60 * 1000,
         workspacePath = path.join(__dirname, '../workspace/'),
     }) {
         this.state = 'active';
@@ -125,10 +127,11 @@ class Pod {
         await new Promise((r) => setTimeout(r, (Math.floor(Math.random() * 30 * 1000))));
         await this.createWorkDir();
 
-        let counter = 1;
-
         const setupTimer = () => {
             this.checkForNewFiles()
+                .catch((_) => {
+                    // Do nothing
+                })
                 .finally(() => {
                     this.pid = setTimeout(setupTimer, this.checkIntervalInMilli);
                 });
@@ -161,7 +164,6 @@ class Pod {
 
     async handleBatch(batch) {
         console.log(`${chalk.greenBright('[NEW BATCH]')} (id: ${batch.id})`);
-
         const request = await fetch(`${this.targetUrl}/batch/${batch.id}?follow`);
 
         const bytesAlreadySentToLogstashFromThisBatch = await this.getBytesSentFromThisParticularBatch({ batch });
