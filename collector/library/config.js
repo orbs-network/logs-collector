@@ -39,7 +39,7 @@ async function getConfiguration() {
         }
     }
 
-    return pods;
+    return pods.slice(0, 25);
 }
 
 function mergeConfigs({ oldConfig, newConfig, removeCallback, addCallback }) {

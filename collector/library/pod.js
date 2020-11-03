@@ -3,37 +3,20 @@ const events = require('events');
 const fs = require('fs');
 const util = require('util');
 
-const { v4: uuidv4 } = require('uuid');
 const fetch = require('node-fetch');
 const chalk = require('chalk');
-const { sortBy } = require('lodash');
+const { sortBy, trim } = require('lodash');
 
-const { BATCH, UNACKED_DATA } = require('./constants');
 const mkdir = util.promisify(fs.mkdir);
 const writeFile = util.promisify(fs.writeFile);
 const readFile = util.promisify(fs.readFile);
 
-let globalBatchHandlerId = 0;
-
 /**
  * @todo:
  * 
- * 
- * 3. Thesis testing: Make sure that access to Logstash is handled by simply re-trying at a later point in time
- *    without creating timers for each and every packet of data.
- * 
- *    As in, if the first packet sending to Logstash fails, abort the entire process and wait for the next
- *    file checker iteration in order to send the data out.
- * 
- *    Leave the mechanism for re-trying packets aside for now (let's see if this improves memory performance somehow)
- * 
- * 5. Persistent mechanism & Startup review together with Ron
- * 6. Reconfigure live while the process is running
+ * 5. Persistent mechanism & Startup review together with Ron 
  * 7. Change the implementation of submitDataToLogstash to use the new endpoints from logs-service (block based response)
  *    (start-offset)
- * 
- * 
- * 
  */
 
 class Pod {
@@ -45,6 +28,8 @@ class Pod {
         workspacePath = path.join(__dirname, '../workspace/'),
     }) {
         this.state = 'active';
+        this.remainder = '';
+
         this.accumulator = [];
         this.pid = null;
         this.em = new events.EventEmitter();
@@ -131,6 +116,7 @@ class Pod {
             this.checkForNewFiles()
                 .catch((_) => {
                     // Do nothing
+                    console.log(_);
                 })
                 .finally(() => {
                     this.pid = setTimeout(setupTimer, this.checkIntervalInMilli);
@@ -201,17 +187,15 @@ class Pod {
         });
     }
 
-    /**
-     * As we are using an events emitter, this is the backbone of our collector application
-     * this method includes all the handlers for the various events we have in the system / per Pod of course.
-     */
-    registerHandlers() {
-        //this.em.on(BATCH, 
-
-        this.em.on(UNACKED_DATA, async ({ data, batch, packetId }) => {
-            await this.submitDataToLogstash({ data, batch, packetId });
-        });
+    isJSON(s) {
+        try {
+            JSON.parse(s);
+        } catch (e) {
+            return false;
+        }
+        return true;
     }
+
 
     /**
      * Submit the data to logstash once it is ready to accept data
@@ -226,15 +210,57 @@ class Pod {
      * 
      */
     async submitDataToLogstash({ data, batch, }) {
-        const body = JSON.stringify({ message: data.toString() });
+        const dataAsString = data.toString();
+        let lines;
 
-        await fetch('http://logstash:5000/', {
-            method: 'post',
-            body,
-            headers: { 'Content-Type': 'application/json' },
-        });
+        if (this.remainder.length > 0) {
+            lines = (this.remainder + dataAsString).split('\n');
+            this.remainder = '';
+        } else {
+            lines = dataAsString.split('\n');
+        }
 
-        await this.documentSentData({ data, batch });
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            let body;
+
+            if (this.isJSON(trim(line))) {
+                // We enter this condition only once we managed to get a one line JSON log
+                // Enrich the object
+                const dataObject = JSON.parse(trim(line));
+                dataObject._collector_batchId = batch.id;
+                dataObject._collector_source_url = this.targetUrl;
+                body = JSON.stringify(dataObject);
+            } else {
+                // From here we can have one of 2 options:
+                // 1. a partial JSON log line
+                // 2. a plain text log
+
+                if (i === lines.length - 1) { // This is the last line from []lines
+                    // This is a partial json, carry this remainder over to the next iteration of submitDataToLogstash()
+                    this.remainder = line;
+                } else {
+                    // This is not the last line and it's not a JSON, it must (probably) be a plain text log line
+                    const dataObject = {
+                        textMessage: line,
+                    };
+
+                    dataObject._collector_batchId = batch.id;
+                    dataObject._collector_source_url = this.targetUrl;
+                    body = JSON.stringify(dataObject);
+                }
+            }
+
+            if (body !== undefined && this.isJSON(body) > 0) {
+                await fetch('http://logstash:5000/', {
+                    method: 'post',
+                    body,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+
+                await this.documentSentData({ data: Buffer.from(line, 'utf-8'), batch });
+            }
+        }
     }
 
     /**
