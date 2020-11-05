@@ -1,15 +1,14 @@
 const { Pod } = require('./library/pod');
 const { stats } = require('./library/stats');
-const { getConfiguration, mergeConfigs } = require('./library/config');
+const { getConfiguration, detectConfigChanges } = require('./library/config');
 
 const reconfigIntervalInMilli = 86400 * 1000;
 const pods = [];
 let config;
 
-async function continuousSetup() {
-    console.log('Configuring pods...');
+async function syncNetworkConfig() {
+    console.log('syncing network configuration...')
     if (!config) {
-        console.log('initial run');
         // Initial run
         config = await getConfiguration();
 
@@ -25,7 +24,7 @@ async function continuousSetup() {
         console.log('subsequent run');
         // Subsequent runs
         let newConfig = await getConfiguration();
-        config = mergeConfigs({
+        config = detectConfigChanges({
             oldConfig: config,
             newConfig,
             removeCallback: (podConfig) => {
@@ -42,8 +41,8 @@ async function continuousSetup() {
     }
 }
 
-continuousSetup();
-setInterval(() => { continuousSetup(); }, reconfigIntervalInMilli);
+syncNetworkConfig();
+setInterval(() => { syncNetworkConfig(); }, reconfigIntervalInMilli);
 
 // process.on('unhandledRejection', () => {
 //     // For now we just want unhandled rejections to not output to console.

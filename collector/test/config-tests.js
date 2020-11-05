@@ -1,6 +1,6 @@
 const { describe, it } = require('mocha');
 const { expect } = require('chai');
-const { getConfiguration, mergeConfigs } = require('./../library/config');
+const { getConfiguration, detectConfigChanges } = require('./../library/config');
 
 let baseConfig;
 
@@ -22,7 +22,7 @@ describe('live config tests', () => {
         let addCalled = false;
         let removeCalled = false;
 
-        const config = mergeConfigs({
+        const config = detectConfigChanges({
             oldConfig,
             newConfig,
             addCallback: () => {
@@ -53,7 +53,7 @@ describe('live config tests', () => {
 
         const adds = [];
 
-        const config = mergeConfigs({
+        const config = detectConfigChanges({
             oldConfig,
             newConfig,
             addCallback: (o) => {
@@ -81,7 +81,7 @@ describe('live config tests', () => {
         const removedEndpoint = newConfig.splice(0, 1);
         const removals = [];
 
-        const config = mergeConfigs({
+        const config = detectConfigChanges({
             oldConfig,
             newConfig,
             addCallback: () => {

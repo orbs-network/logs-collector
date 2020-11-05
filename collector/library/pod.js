@@ -23,10 +23,10 @@ class Pod {
     constructor({
         targetUrl,
         serviceName,
-        startDelay = 24,
-        checkInterval = 60 * 1000,
+        retryIntervalInMs = 60 * 1000,
         workspacePath = path.join(__dirname, '../workspace/'),
     }) {
+        this.dead = false;
         this.state = 'active';
         this.remainder = '';
 
@@ -36,8 +36,7 @@ class Pod {
 
         this.serviceName = serviceName;
         this.targetUrl = targetUrl;
-        this.checkIntervalInMilli = checkInterval;
-        this.startDelay = startDelay;
+        this.retryIntervalInMs = retryIntervalInMs;
         this.workspacePath = workspacePath;
         this.seenBatches = [];
         this.unackedPackets = [];
@@ -55,8 +54,8 @@ class Pod {
         return mkdir(path.join(this.workspacePath, this.serviceName), { recursive: true });
     }
 
-    async checkForNewFiles() {
-        console.log(`[START] periodical check for new files`, this.targetUrl);
+    async checkAndProcessNewBatches() {
+        console.log(`[Check & process new batches]`, this.targetUrl);
 
         let result, response;
 
@@ -99,6 +98,7 @@ class Pod {
 
     stop() {
         console.log(`Shutting down pod for endpoint ${this.targetUrl}`);
+        this.dead = true;
         clearInterval(this.pid);
     }
 
@@ -113,13 +113,14 @@ class Pod {
         await this.createWorkDir();
 
         const setupTimer = () => {
-            this.checkForNewFiles()
+            this.checkAndProcessNewBatches()
                 .catch((_) => {
                     // Do nothing
-                    console.log(_);
                 })
                 .finally(() => {
-                    this.pid = setTimeout(setupTimer, this.checkIntervalInMilli);
+                    if (!this.dead) {
+                        this.pid = setTimeout(setupTimer, this.retryIntervalInMs);
+                    }
                 });
         };
 
@@ -213,12 +214,8 @@ class Pod {
         const dataAsString = data.toString();
         let lines;
 
-        if (this.remainder.length > 0) {
-            lines = (this.remainder + dataAsString).split('\n');
-            this.remainder = '';
-        } else {
-            lines = dataAsString.split('\n');
-        }
+        lines = (this.remainder + dataAsString).split('\n');
+        this.remainder = '';
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
@@ -237,7 +234,7 @@ class Pod {
                 // 2. a plain text log
 
                 if (i === lines.length - 1) { // This is the last line from []lines
-                    // This is a partial json, carry this remainder over to the next iteration of submitDataToLogstash()
+                    // This is a partial json or text line, carry this remainder over to the next iteration of submitDataToLogstash()
                     this.remainder = line;
                 } else {
                     // This is not the last line and it's not a JSON, it must (probably) be a plain text log line

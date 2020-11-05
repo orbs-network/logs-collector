@@ -39,10 +39,10 @@ async function getConfiguration() {
         }
     }
 
-    return pods.slice(0, 25);
+    return pods;
 }
 
-function mergeConfigs({ oldConfig, newConfig, removeCallback, addCallback }) {
+function detectConfigChanges({ oldConfig, newConfig, removeCallback, addCallback }) {
     const mergedConfig = [];
 
     for (let n in newConfig) {
@@ -62,11 +62,11 @@ function mergeConfigs({ oldConfig, newConfig, removeCallback, addCallback }) {
         }
     }
 
-    return mergedConfig;
+    return newConfig;
 }
 
 module.exports = {
     getConfiguration,
-    mergeConfigs,
+    detectConfigChanges,
 };
 
