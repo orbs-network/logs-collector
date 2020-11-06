@@ -14,13 +14,11 @@ const stats = {
         let logstashConnected = false;
 
         let totalSentBytes = 0;
-        let totalUnackedBytes = 0;
 
         for (let n in this.pods) {
             let pod = this.pods[n];
 
             totalSentBytes += pod.stats.totalSentBytes;
-            totalUnackedBytes += pod.stats.totalUnackedBytes;
         }
 
         if (totalSentBytes > lastSentBytes){

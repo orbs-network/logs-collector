@@ -39,10 +39,8 @@ class Pod {
         this.retryIntervalInMs = retryIntervalInMs;
         this.workspacePath = workspacePath;
         this.seenBatches = [];
-        this.unackedPackets = [];
         this.stats = {
             totalSentBytes: 0,
-            totalUnackedBytes: 0,
         };
     }
 
@@ -94,6 +92,11 @@ class Pod {
                 } // Avoid moving to next batch in case we could not download the entire batch
             }
         }
+
+        // In case we handled everything successfully, start again immediately
+        // We usually will wait and listen on the latest batch for quite some time.. So there
+        // is less of a point to wait a complete retryIntervalInMs before continuing in case all went wells
+        return this.checkAndProcessNewBatches();
     }
 
     stop() {
@@ -162,6 +165,11 @@ class Pod {
 
         await new Promise((res, rej) => {
             request.body.on('data', async (data) => {
+                if (this.dead === true) { // Our pod has stopped, kill this request
+                    rej(err);
+                    request.body.destroy();
+                }
+
                 let sendData = false;
                 if (bytesAlreadySentToLogstashFromThisBatch > 0 && bytesSentAccumlator >= bytesAlreadySentToLogstashFromThisBatch) {
                     sendData = true;
@@ -188,15 +196,22 @@ class Pod {
         });
     }
 
-    isJSON(s) {
-        try {
-            JSON.parse(s);
-        } catch (e) {
-            return false;
-        }
-        return true;
-    }
+    jsonify(s, b) {
+        let o;
 
+        try {
+            o = JSON.parse(s);
+        } catch (e) {
+            o = {
+                textMessage: s,
+            };
+        }
+
+        o._collector_batchId = b.id;
+        o._collector_source_url = this.targetUrl;
+
+        return o;
+    }
 
     /**
      * Submit the data to logstash once it is ready to accept data
@@ -217,47 +232,23 @@ class Pod {
         lines = (this.remainder + dataAsString).split('\n');
         this.remainder = '';
 
-        for (let i = 0; i < lines.length; i++) {
+        // Run on all lines but the last one!
+        for (let i = 0; i < lines.length - 1; i++) {
             const line = lines[i];
-            let body;
+            const body = JSON.stringify(this.jsonify(trim(line), batch));
 
-            if (this.isJSON(trim(line))) {
-                // We enter this condition only once we managed to get a one line JSON log
-                // Enrich the object
-                const dataObject = JSON.parse(trim(line));
-                dataObject._collector_batchId = batch.id;
-                dataObject._collector_source_url = this.targetUrl;
-                body = JSON.stringify(dataObject);
-            } else {
-                // From here we can have one of 2 options:
-                // 1. a partial JSON log line
-                // 2. a plain text log
+            await fetch('http://logstash:5000/', {
+                method: 'post',
+                body,
+                headers: { 'Content-Type': 'application/json' },
+            });
 
-                if (i === lines.length - 1) { // This is the last line from []lines
-                    // This is a partial json or text line, carry this remainder over to the next iteration of submitDataToLogstash()
-                    this.remainder = line;
-                } else {
-                    // This is not the last line and it's not a JSON, it must (probably) be a plain text log line
-                    const dataObject = {
-                        textMessage: line,
-                    };
-
-                    dataObject._collector_batchId = batch.id;
-                    dataObject._collector_source_url = this.targetUrl;
-                    body = JSON.stringify(dataObject);
-                }
-            }
-
-            if (body !== undefined && this.isJSON(body) > 0) {
-                await fetch('http://logstash:5000/', {
-                    method: 'post',
-                    body,
-                    headers: { 'Content-Type': 'application/json' },
-                });
-
-                await this.documentSentData({ data: Buffer.from(line, 'utf-8'), batch });
-            }
+            // Document the amount of bytes sent (+1 for the newline)
+            await this.documentSentData({ data: Buffer.from(line, 'utf-8') + 1, batch });
         }
+
+        // Always insert the last line into the remainder for the next packet of data.
+        this.remainder = lines[lines.length - 1];
     }
 
     /**
