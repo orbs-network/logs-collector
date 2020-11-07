@@ -7,6 +7,7 @@ const fetch = require('node-fetch');
 const chalk = require('chalk');
 const { sortBy, trim } = require('lodash');
 
+const DEAD_POD = 'podIsDead';
 const mkdir = util.promisify(fs.mkdir);
 const writeFile = util.promisify(fs.writeFile);
 const readFile = util.promisify(fs.readFile);
@@ -103,6 +104,7 @@ class Pod {
         console.log(`Shutting down pod for endpoint ${this.targetUrl}`);
         this.dead = true;
         clearInterval(this.pid);
+        this.em.emit(DEAD_POD, null);
     }
 
     /**
@@ -164,6 +166,11 @@ class Pod {
         }
 
         await new Promise((res, rej) => {
+            this.em.on(DEAD_POD, () => {
+                rej(err);
+                request.body.destroy();
+            });
+
             request.body.on('data', async (data) => {
                 if (this.dead === true) { // Our pod has stopped, kill this request
                     rej(err);
