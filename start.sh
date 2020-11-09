@@ -3,7 +3,7 @@
 echo "Starting up everything..."
 
 if test ! -f ".env"; then
-    echo "ELK_VERSION=7" > .env
+    echo "ELK_VERSION=7.9.3" > .env
 fi
 
 cd collector && npm install; cd ..
