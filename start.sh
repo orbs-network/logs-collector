@@ -6,7 +6,7 @@ if test ! -f ".env"; then
     echo "ELK_VERSION=7" > .env
 fi
 
-cd collector && npm install;  node generate-config.js ; cd ..
+cd collector && npm install; cd ..
 
 echo "Starting up the ELK stack.."
 docker-compose up -d
