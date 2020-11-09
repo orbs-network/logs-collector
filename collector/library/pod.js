@@ -54,6 +54,10 @@ class Pod {
     }
 
     async checkAndProcessNewBatches() {
+        if (this.dead === true) {
+            return;
+        }
+
         console.log(`[Check & process new batches]`, this.targetUrl);
 
         let result, response;
@@ -74,6 +78,10 @@ class Pod {
         const batches = sortBy(response, ['id']);
 
         for (let i = 0; i < batches.length; i++) {
+            if (this.dead === true) {
+                return;
+            }
+
             const batch = batches[i];
             const bytesSentFromBatch = await this.getBytesSentFromThisParticularBatch({ batch });
 
@@ -172,11 +180,6 @@ class Pod {
             });
 
             request.body.on('data', async (data) => {
-                if (this.dead === true) { // Our pod has stopped, kill this request
-                    rej(err);
-                    request.body.destroy();
-                }
-
                 let sendData = false;
                 if (bytesAlreadySentToLogstashFromThisBatch > 0 && bytesSentAccumlator >= bytesAlreadySentToLogstashFromThisBatch) {
                     sendData = true;
