@@ -102,6 +102,8 @@ class Pod {
             }
         }
 
+        
+
         // In case we handled everything successfully, start again immediately
         // We usually will wait and listen on the latest batch for quite some time.. So there
         // is less of a point to wait a complete retryIntervalInMs before continuing in case all went wells
