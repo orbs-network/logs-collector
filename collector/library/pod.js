@@ -12,6 +12,8 @@ const mkdir = util.promisify(fs.mkdir);
 const writeFile = util.promisify(fs.writeFile);
 const readFile = util.promisify(fs.readFile);
 
+
+
 /**
  * @todo:
  * 
@@ -50,7 +52,7 @@ class Pod {
      * later on update our state based on this path.
      */
     createWorkDir() {
-        return mkdir(path.join(this.workspacePath, this.serviceName), { recursive: true });
+        return mkdir(path.join(this.workspacePath, `${this.getDirectorySafeIPFromTargetUrl(this.targetUrl)}_${this.serviceName}`), { recursive: true });
     }
 
     async checkAndProcessNewBatches() {
@@ -140,11 +142,16 @@ class Pod {
         setupTimer();
     }
 
+    getDirectorySafeIPFromTargetUrl(a) {
+        let b = a.replace('http://', '');
+        return b.substr(0, b.indexOf(':')).replace(/\./g, '_');
+    }
+
     /*
     * For each batch we have a specific file in which we update the amount of bytes submitted to Logstash
     */
     getTargetPathForBatch({ batch }) {
-        return path.join(this.workspacePath, this.serviceName, `batch-${batch.id}`);
+        return path.join(this.workspacePath, `${this.getDirectorySafeIPFromTargetUrl(this.targetUrl)}_${this.serviceName}`, `batch-${batch.id}`);
     }
 
     // Get the size of the batch (as in bytes size)
@@ -180,6 +187,7 @@ class Pod {
             });
 
             request.body.on('data', async (data) => {
+                request.body.pause();
                 let sendData = false;
                 if (bytesAlreadySentToLogstashFromThisBatch > 0 && bytesSentAccumlator >= bytesAlreadySentToLogstashFromThisBatch) {
                     sendData = true;
@@ -197,6 +205,7 @@ class Pod {
                 }
 
                 bytesSentAccumlator += data.length;
+                request.body.resume();
             });
 
             request.body.on('error', (err) => {
