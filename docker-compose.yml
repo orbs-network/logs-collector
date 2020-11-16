@@ -8,6 +8,8 @@ services:
       - ./collector:/collector
     working_dir: /collector/
     entrypoint: node app.js
+    ports:
+      - "8080:3000"
     networks:
       - elk
 
