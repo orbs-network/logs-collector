@@ -21,8 +21,8 @@ services:
         source: ./elasticsearch/config/elasticsearch.yml
         target: /usr/share/elasticsearch/config/elasticsearch.yml
         read_only: true
-      - type: volume
-        source: elasticsearch
+      - type: bind
+        source: ./../elasticsearch-data
         target: /usr/share/elasticsearch/data
     ports:
       - "9200:9200"
@@ -81,6 +81,3 @@ services:
 networks:
   elk:
     driver: bridge
-
-volumes:
-  elasticsearch:

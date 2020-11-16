@@ -77,6 +77,7 @@ class Pod {
             return;
         }
 
+        let targetBatch;
         const batches = sortBy(response, ['id']);
 
         for (let i = 0; i < batches.length; i++) {
@@ -93,21 +94,17 @@ class Pod {
             }
 
             if (batch.batchSize > bytesSentFromBatch) {
-                console.log('downloading batch', batch);
-                // handle batch
-                await this.handleBatch(batch);
-
-                if (await this.getBytesSentFromThisParticularBatch({ batch }) < batch.batchSize) {
-                    console.log('could not download the entire batch', batch);
-                    return;
-                } // Avoid moving to next batch in case we could not download the entire batch
+                targetBatch = batch;
+                
+                break;
             }
         }
 
-        // In case we handled everything successfully, start again immediately
-        // We usually will wait and listen on the latest batch for quite some time.. So there
-        // is less of a point to wait a complete retryIntervalInMs before continuing in case all went wells
-        return this.checkAndProcessNewBatches();
+        if (targetBatch !== undefined) {
+            // handle batch
+            console.log('downloading batch', targetBatch);
+            await this.handleBatch(targetBatch);
+        }
     }
 
     stop() {
