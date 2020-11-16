@@ -5,22 +5,12 @@ const util = require('util');
 
 const fetch = require('node-fetch');
 const chalk = require('chalk');
-const { sortBy, trim } = require('lodash');
+const { sortBy, maxBy, trim } = require('lodash');
 
 const DEAD_POD = 'podIsDead';
 const mkdir = util.promisify(fs.mkdir);
 const writeFile = util.promisify(fs.writeFile);
 const readFile = util.promisify(fs.readFile);
-
-
-
-/**
- * @todo:
- * 
- * 5. Persistent mechanism & Startup review together with Ron 
- * 7. Change the implementation of submitDataToLogstash to use the new endpoints from logs-service (block based response)
- *    (start-offset)
- */
 
 class Pod {
     constructor({
@@ -56,51 +46,44 @@ class Pod {
     }
 
     async checkAndProcessNewBatches() {
-        if (this.dead === true) {
-            return;
-        }
-
-        console.log(`[Check & process new batches]`, this.targetUrl);
-
-        let result, response;
-
-        try {
-            result = await fetch(this.targetUrl);
-            response = await result.json();
-        } catch (err) {
-            //console.log('failed getting available batches', err);
-            return;
-        }
-
-        if ('status' in response && response.status === 'error') {
-            //console.log('found error when fetching availble batches', response);
-            return;
-        }
-
-        let targetBatch;
-        const batches = sortBy(response, ['id']);
-
-        for (let i = 0; i < batches.length; i++) {
+        while (true) {
             if (this.dead === true) {
-                return;
+                throw new Error(`Pod for ${this.targetUrl} is now dead`);
             }
 
-            const batch = batches[i];
-            const bytesSentFromBatch = await this.getBytesSentFromThisParticularBatch({ batch });
+            console.log(`[Check & process new batches]`, this.targetUrl);
 
-            if (bytesSentFromBatch > batch.batchSize) {
-                console.log('We collected more bytes than availble!', this.targetUrl, 'batch id:', batch.id, 'bytes handled:', bytesSentFromBatch, 'batch size:', batch.batchSize);
-                continue;
+            const result = await fetch(this.targetUrl);
+            const response = await result.json();
+
+            if ('status' in response && response.status === 'error') {
+                throw new Error(`Pod for ${this.targetUrl} appears to have an error ${JSON.stringify(response)}`);
             }
 
-            if (batch.batchSize > bytesSentFromBatch) {
-                targetBatch = batch;
-                
-                break;
-            }
-        }
+            let targetBatch = maxBy(batches, 'id');
+            const batches = sortBy(response, ['id']);
 
-        if (targetBatch !== undefined) {
+            for (let i = 0; i < batches.length; i++) {
+                const batch = batches[i];
+                const bytesSentFromBatch = await this.getBytesSentFromThisParticularBatch({ batch });
+
+                if (bytesSentFromBatch > batch.batchSize) {
+                    const errorMsg = `We collected more bytes than availble! ${this.targetUrl}, batch.id: ${batch.id}, bytes handled: ${bytesSentFromBatch}, batch.size: ${batch.batchSize}`;
+                    console.log(errorMsg);
+                    throw new Error(errorMsg);
+                }
+
+                if (batch.batchSize > bytesSentFromBatch) {
+                    targetBatch = batch;
+                    break;
+                }
+            }
+
+            if (!targetBatch) {
+                // For the rare occasion where no batches are available
+                throw new Error(`No batches available to process for Pod: ${this.targetUrl}`);
+            }
+
             // handle batch
             console.log('downloading batch', targetBatch);
             await this.handleBatch(targetBatch);
