@@ -46,11 +46,7 @@ class Pod {
     }
 
     async checkAndProcessNewBatches() {
-        while (true) {
-            if (this.dead === true) {
-                throw new Error(`Pod for ${this.targetUrl} is now dead`);
-            }
-
+        while (!this.dead) {
             console.log(`[Check & process new batches]`, this.targetUrl);
 
             const result = await fetch(this.targetUrl);
@@ -60,8 +56,12 @@ class Pod {
                 throw new Error(`Pod for ${this.targetUrl} appears to have an error ${JSON.stringify(response)}`);
             }
 
-            let targetBatch = maxBy(batches, 'id');
             const batches = sortBy(response, ['id']);
+            let targetBatch = maxBy(batches, 'id');
+
+            if (batches.length === 0) {  // For the rare occasion where no batches are available
+                throw new Error(`No batches available to process for Pod: ${this.targetUrl}`);
+            }
 
             for (let i = 0; i < batches.length; i++) {
                 const batch = batches[i];
@@ -77,11 +77,6 @@ class Pod {
                     targetBatch = batch;
                     break;
                 }
-            }
-
-            if (!targetBatch) {
-                // For the rare occasion where no batches are available
-                throw new Error(`No batches available to process for Pod: ${this.targetUrl}`);
             }
 
             // handle batch

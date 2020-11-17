@@ -2,7 +2,6 @@ const express = require('express');
 const app = express();
 const { promisify } = require('util');
 const { exec } = require('child_process');
-const { trim } = require('lodash');
 
 const { Pod } = require('./library/pod');
 const { stats } = require('./library/stats');
