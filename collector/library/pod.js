@@ -5,22 +5,12 @@ const util = require('util');
 
 const fetch = require('node-fetch');
 const chalk = require('chalk');
-const { sortBy, trim } = require('lodash');
+const { sortBy, maxBy, trim } = require('lodash');
 
 const DEAD_POD = 'podIsDead';
 const mkdir = util.promisify(fs.mkdir);
 const writeFile = util.promisify(fs.writeFile);
 const readFile = util.promisify(fs.readFile);
-
-
-
-/**
- * @todo:
- * 
- * 5. Persistent mechanism & Startup review together with Ron 
- * 7. Change the implementation of submitDataToLogstash to use the new endpoints from logs-service (block based response)
- *    (start-offset)
- */
 
 class Pod {
     constructor({
@@ -56,58 +46,52 @@ class Pod {
     }
 
     async checkAndProcessNewBatches() {
-        if (this.dead === true) {
-            return;
-        }
+        while (!this.dead) {
+            this.remainder = '';
+            console.log(`[Check & process new batches]`, this.targetUrl);
 
-        console.log(`[Check & process new batches]`, this.targetUrl);
+            const result = await fetch(this.targetUrl);
+            const response = await result.json();
 
-        let result, response;
-
-        try {
-            result = await fetch(this.targetUrl);
-            response = await result.json();
-        } catch (err) {
-            //console.log('failed getting available batches', err);
-            return;
-        }
-
-        if ('status' in response && response.status === 'error') {
-            //console.log('found error when fetching availble batches', response);
-            return;
-        }
-
-        const batches = sortBy(response, ['id']);
-
-        for (let i = 0; i < batches.length; i++) {
-            if (this.dead === true) {
-                return;
+            if ('status' in response && response.status === 'error') {
+                throw new Error(`Pod for ${this.targetUrl} appears to have an error ${JSON.stringify(response)}`);
             }
 
-            const batch = batches[i];
-            const bytesSentFromBatch = await this.getBytesSentFromThisParticularBatch({ batch });
+            const batches = sortBy(response, ['id']);
+            let targetBatch = maxBy(batches, 'id');
 
-            if (bytesSentFromBatch > batch.batchSize) {
-                console.log('We collected more bytes than availble!', this.targetUrl, 'batch id:', batch.id, 'bytes handled:', bytesSentFromBatch, 'batch size:', batch.batchSize);
-                continue;
+            if (batches.length === 0) {  // For the rare occasion where no batches are available
+                throw new Error(`No batches available to process for Pod: ${this.targetUrl}`);
             }
 
-            if (batch.batchSize > bytesSentFromBatch) {
-                console.log('downloading batch', batch);
-                // handle batch
-                await this.handleBatch(batch);
+            for (let i = 0; i < batches.length; i++) {
+                const batch = batches[i];
+                const bytesSentFromBatch = await this.getBytesSentFromThisParticularBatch({ batch });
 
-                if (await this.getBytesSentFromThisParticularBatch({ batch }) < batch.batchSize) {
-                    console.log('could not download the entire batch', batch);
-                    return;
-                } // Avoid moving to next batch in case we could not download the entire batch
+                if (bytesSentFromBatch > batch.batchSize) {
+                    const errorMsg = `We collected more bytes than availble! ${this.targetUrl}, batch.id: ${batch.id}, bytes handled: ${bytesSentFromBatch}, batch.size: ${batch.batchSize}`;
+                    console.log(errorMsg);
+                    throw new Error(errorMsg);
+                }
+
+                if (batch.batchSize > bytesSentFromBatch) {
+                    targetBatch = batch;
+                    break;
+                }
+            }
+
+            // handle batch
+            console.log('downloading batch', targetBatch);
+            await this.handleBatch(targetBatch);
+
+            // We might have a remainder
+            //await this.submitDataToLogstash({ batch: targetBatch, data: Buffer.from(this.remainder, 'utf-8') });
+            if (this.remainder.length > 0) {
+                let logMsg = `We have a remainder after handling batch, batch: ${batch.id}, url: ${this.targetUrl}, remainder: ${this.remainder}`;
+                console.error(logMsg);
+                throw new Error(logMsg);
             }
         }
-
-        // In case we handled everything successfully, start again immediately
-        // We usually will wait and listen on the latest batch for quite some time.. So there
-        // is less of a point to wait a complete retryIntervalInMs before continuing in case all went wells
-        return this.checkAndProcessNewBatches();
     }
 
     stop() {
