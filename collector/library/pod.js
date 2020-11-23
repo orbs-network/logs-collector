@@ -155,10 +155,11 @@ class Pod {
 
     async handleBatch(batch) {
         console.log(`${chalk.greenBright('[NEW BATCH]')} (id: ${batch.id})`);
-        const request = await fetch(`${this.targetUrl}/batch/${batch.id}?follow`);
-
         const bytesAlreadySentToLogstashFromThisBatch = await this.getBytesSentFromThisParticularBatch({ batch });
-        let bytesSentAccumlator = 0;
+        const baseUrl = `${this.targetUrl}/batch/${batch.id}?follow`;
+        const url = (bytesAlreadySentToLogstashFromThisBatch > 0) ? `${baseUrl}&start=${bytesAlreadySentToLogstashFromThisBatch + 1}` : baseUrl;
+
+        const request = await fetch(url);
 
         if (!request.ok) {
             throw new Error('The request did not finish successfully!');
@@ -172,23 +173,12 @@ class Pod {
 
             request.body.on('data', async (data) => {
                 request.body.pause();
-                let sendData = false;
-                if (bytesAlreadySentToLogstashFromThisBatch > 0 && bytesSentAccumlator >= bytesAlreadySentToLogstashFromThisBatch) {
-                    sendData = true;
-                }
 
-                if (bytesAlreadySentToLogstashFromThisBatch === 0) {
-                    sendData = true;
-                }
+                await this.submitDataToLogstash({ data, batch }).catch((err) => {
+                    rej(err);
+                    request.body.destroy();
+                });
 
-                if (sendData) {
-                    await this.submitDataToLogstash({ data, batch }).catch((err) => {
-                        rej(err);
-                        request.body.destroy();
-                    });
-                }
-
-                bytesSentAccumlator += data.length;
                 request.body.resume();
             });
 
