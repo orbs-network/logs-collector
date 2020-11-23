@@ -47,6 +47,7 @@ class Pod {
 
     async checkAndProcessNewBatches() {
         while (!this.dead) {
+            this.remainder = '';
             console.log(`[Check & process new batches]`, this.targetUrl);
 
             const result = await fetch(this.targetUrl);
@@ -82,6 +83,14 @@ class Pod {
             // handle batch
             console.log('downloading batch', targetBatch);
             await this.handleBatch(targetBatch);
+
+            // We might have a remainder
+            //await this.submitDataToLogstash({ batch: targetBatch, data: Buffer.from(this.remainder, 'utf-8') });
+            if (this.remainder.length > 0) {
+                let logMsg = `We have a remainder after handling batch, batch: ${batch.id}, url: ${this.targetUrl}, remainder: ${this.remainder}`;
+                console.error(logMsg);
+                throw new Error(logMsg);
+            }
         }
     }
 
