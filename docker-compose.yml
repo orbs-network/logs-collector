@@ -18,6 +18,7 @@ services:
       context: elasticsearch/
       args:
         ELK_VERSION: $ELK_VERSION
+    user: root
     volumes:
       - type: bind
         source: ./elasticsearch/config/elasticsearch.yml
@@ -69,6 +70,7 @@ services:
       context: kibana/
       args:
         ELK_VERSION: $ELK_VERSION
+    user: root
     environment:
       uid: 1000
     volumes:
