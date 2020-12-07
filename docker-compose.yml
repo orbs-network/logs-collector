@@ -17,8 +17,7 @@ services:
     build:
       context: elasticsearch/
       args:
-        ELK_VERSION: $ELK_VERSION
-    user: root
+        ELK_VERSION: $ELK_VERSION    
     volumes:
       - type: bind
         source: ./elasticsearch/config/elasticsearch.yml
