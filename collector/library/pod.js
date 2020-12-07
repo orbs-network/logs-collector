@@ -20,6 +20,7 @@ class Pod {
         workspacePath = path.join(__dirname, '../workspace/'),
     }) {
         this.dead = false;
+        this.workDirCreated = false;
         this.state = 'active';
         this.remainder = '';
 
@@ -45,6 +46,14 @@ class Pod {
         return mkdir(path.join(this.workspacePath, `${this.getDirectorySafeIPFromTargetUrl(this.targetUrl)}_${this.serviceName}`), { recursive: true });
     }
 
+    async initSeenBatches({ batches }) {
+        for (let i = 0; i < batches.length; i++) {
+            const batch = batches[i];
+            const targetPath = this.getTargetPathForBatch({ batch });
+            await writeFile(targetPath, batch.batchSize.toString());
+        }
+    }
+
     async checkAndProcessNewBatches() {
         while (!this.dead) {
             this.remainder = '';
@@ -62,6 +71,12 @@ class Pod {
 
             if (batches.length === 0) {  // For the rare occasion where no batches are available
                 throw new Error(`No batches available to process for Pod: ${this.targetUrl}`);
+            }
+
+            if (!this.workDirCreated) {
+                await this.createWorkDir();
+                await this.initSeenBatches({ batches });
+                this.workDirCreated = true;
             }
 
             for (let i = 0; i < batches.length; i++) {
@@ -109,7 +124,6 @@ class Pod {
      */
     async start() {
         await new Promise((r) => setTimeout(r, (Math.floor(Math.random() * 30 * 1000))));
-        await this.createWorkDir();
 
         const setupTimer = () => {
             this.checkAndProcessNewBatches()
@@ -145,12 +159,7 @@ class Pod {
         try {
             size = parseInt(await readFile(targetPath, 'utf-8'));
         } catch (err) {
-            if (!fs.existsSync(targetPath)) {
-                await writeFile(targetPath, batch.batchSize.toString());
-                size = batch.batchSize;
-            } else {
-                size = 0;
-            }
+            size = 0;
         }
 
         if (!this.accumulator[batch.id]) {
