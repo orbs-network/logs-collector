@@ -141,10 +141,16 @@ class Pod {
     // Get the size of the batch (as in bytes size)
     async getBytesSentFromThisParticularBatch({ batch }) {
         let size;
+        const targetPath = this.getTargetPathForBatch({ batch });
         try {
-            size = parseInt(await readFile(this.getTargetPathForBatch({ batch }), 'utf-8'));
+            size = parseInt(await readFile(targetPath, 'utf-8'));
         } catch (err) {
-            size = 0;
+            if (!fs.existsSync(targetPath)) {
+                await writeFile(targetPath, batch.batchSize.toString());
+                size = batch.batchSize;
+            } else {
+                size = 0;
+            }
         }
 
         if (!this.accumulator[batch.id]) {
