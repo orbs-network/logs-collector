@@ -37,12 +37,28 @@ class Pod {
         };
     }
 
+    PodWorkingDirectory() {
+        return path.join(this.workspacePath, `${this.getDirectorySafeIPFromTargetUrl(this.targetUrl)}_${this.serviceName}`);
+    }
+
     /**
      * This runs only once per pod instance and makes sure the working directory (the root one for our Pod) has been created so that we can
      * later on update our state based on this path.
      */
     createWorkDir() {
-        return mkdir(path.join(this.workspacePath, `${this.getDirectorySafeIPFromTargetUrl(this.targetUrl)}_${this.serviceName}`), { recursive: true });
+        return mkdir(this.PodWorkingDirectory(), { recursive: true });
+    }
+
+    podDirExists() {
+        return fs.existsSync(this.PodWorkingDirectory());
+    }
+
+    async initSeenBatches({ batches }) {
+        for (let i = 0; i < batches.length; i++) {
+            const batch = batches[i];
+            const targetPath = this.getTargetPathForBatch({ batch });
+            await writeFile(targetPath, batch.batchSize.toString());
+        }
     }
 
     async checkAndProcessNewBatches() {
@@ -62,6 +78,11 @@ class Pod {
 
             if (batches.length === 0) {  // For the rare occasion where no batches are available
                 throw new Error(`No batches available to process for Pod: ${this.targetUrl}`);
+            }
+
+            if (!this.podDirExists()) {
+                await this.createWorkDir();
+                await this.initSeenBatches({ batches });
             }
 
             for (let i = 0; i < batches.length; i++) {
@@ -109,7 +130,6 @@ class Pod {
      */
     async start() {
         await new Promise((r) => setTimeout(r, (Math.floor(Math.random() * 30 * 1000))));
-        await this.createWorkDir();
 
         const setupTimer = () => {
             this.checkAndProcessNewBatches()
@@ -141,8 +161,9 @@ class Pod {
     // Get the size of the batch (as in bytes size)
     async getBytesSentFromThisParticularBatch({ batch }) {
         let size;
+        const targetPath = this.getTargetPathForBatch({ batch });
         try {
-            size = parseInt(await readFile(this.getTargetPathForBatch({ batch }), 'utf-8'));
+            size = parseInt(await readFile(targetPath, 'utf-8'));
         } catch (err) {
             size = 0;
         }
