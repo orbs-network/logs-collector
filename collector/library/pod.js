@@ -20,7 +20,6 @@ class Pod {
         workspacePath = path.join(__dirname, '../workspace/'),
     }) {
         this.dead = false;
-        this.workDirCreated = false;
         this.state = 'active';
         this.remainder = '';
 
@@ -38,12 +37,20 @@ class Pod {
         };
     }
 
+    PodWorkingDirectory() {
+        return path.join(this.workspacePath, `${this.getDirectorySafeIPFromTargetUrl(this.targetUrl)}_${this.serviceName}`);
+    }
+
     /**
      * This runs only once per pod instance and makes sure the working directory (the root one for our Pod) has been created so that we can
      * later on update our state based on this path.
      */
     createWorkDir() {
-        return mkdir(path.join(this.workspacePath, `${this.getDirectorySafeIPFromTargetUrl(this.targetUrl)}_${this.serviceName}`), { recursive: true });
+        return mkdir(this.PodWorkingDirectory(), { recursive: true });
+    }
+
+    podDirExists() {
+        return fs.existsSync(this.PodWorkingDirectory());
     }
 
     async initSeenBatches({ batches }) {
@@ -73,10 +80,9 @@ class Pod {
                 throw new Error(`No batches available to process for Pod: ${this.targetUrl}`);
             }
 
-            if (!this.workDirCreated) {
+            if (!this.podDirExists()) {
                 await this.createWorkDir();
                 await this.initSeenBatches({ batches });
-                this.workDirCreated = true;
             }
 
             for (let i = 0; i < batches.length; i++) {
