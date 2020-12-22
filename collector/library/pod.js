@@ -16,6 +16,7 @@ class Pod {
     constructor({
         targetUrl,
         serviceName,
+        ip,
         retryIntervalInMs = 60 * 1000,
         workspacePath = path.join(__dirname, '../workspace/'),
     }) {
@@ -31,6 +32,7 @@ class Pod {
         this.targetUrl = targetUrl;
         this.retryIntervalInMs = retryIntervalInMs;
         this.workspacePath = workspacePath;
+        this.ip = ip;
         this.seenBatches = [];
         this.stats = {
             totalSentBytes: 0,
@@ -221,8 +223,9 @@ class Pod {
             };
         }
 
-        o._collector_batchId = b.id;
-        o._collector_source_url = this.targetUrl;
+        o._c_batchId = b.id;
+        o._c_source_ip = this.ip;
+        o._c_service = this.serviceName.toLowerCase();
 
         return o;
     }
