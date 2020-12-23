@@ -35,7 +35,7 @@ async function getConfiguration() {
 
             pods.push({
                 targetUrl: `http://${node.Ip}:8666/logs/${service.ServiceUrlName}`,
-                serviceName: `service-${service.Name}`,
+                serviceName: `${service.Name}`,
                 ip: node.Ip,
             });
         }
