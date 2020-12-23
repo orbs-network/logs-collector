@@ -21,7 +21,8 @@ async function getConfiguration() {
 
             pods.push({
                 targetUrl: `http://${node.Ip}:8666/logs/chain-${chain.Id}`,
-                serviceName: `chain-${chain.Id}`
+                serviceName: `chain-${chain.Id}`,
+                ip: node.Ip,
             });
         }
     }
@@ -34,7 +35,8 @@ async function getConfiguration() {
 
             pods.push({
                 targetUrl: `http://${node.Ip}:8666/logs/${service.ServiceUrlName}`,
-                serviceName: `service-${service.Name}`
+                serviceName: `${service.Name}`,
+                ip: node.Ip,
             });
         }
     }
