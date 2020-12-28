@@ -223,9 +223,9 @@ class Pod {
             };
         }
 
-        o._c_batchId = b.id;
-        o._c_source_ip = this.ip;
-        o._c_service = this.serviceName.toLowerCase();
+        o.c_batchId = b.id;
+        o.c_source_ip = this.ip;
+        o.c_service = this.serviceName.toLowerCase();
 
         return o;
     }
